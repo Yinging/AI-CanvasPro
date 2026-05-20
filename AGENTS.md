@@ -314,6 +314,12 @@ RunningHub 工作流新增时，不要优先往 `RunningHubAdapter.js` 堆大段
 
 自定义组件也必须挂到 manifest 的 `extension point`，不得散落在模型判断里。
 
+视频 `modelApi` 模型的比例字段必须持久走同一条通用链路：
+
+- manifest 中表示画布显示比例的 `uiSchema` 字段必须声明 `displayRole: "aspectRatio"`，默认字段 ID 仍优先使用 `aspectRatio`。
+- 点击比例控件时，必须同时写入模型请求参数和节点显示状态；显示状态复用现有 `buildImageSchemaAspectRatioDisplayPatch` / `applyImageSchemaRatioResizeAnimation`，同步 `aspectRatio`、`width`、`height`、`x`、`y`。
+- 禁止为某个视频模型单独写比例显示分支；新增 APIMart / Dreamina / 其他视频 `modelApi` 时，只补 manifest/schema/bodyMapping，不能让用户再手工提醒“比例改变后画布尺寸也要变”。
+
 ## 架构规则
 
 涉及模块职责、状态流、交互分层、坐标换算、网络收口时，先查阅 `docs/architecture.md`。

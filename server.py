@@ -444,6 +444,15 @@ def _has_file_save_paths(settings):
     return isinstance(settings, dict) and isinstance(settings.get("fileSavePaths"), dict)
 
 
+def _is_user_managed_file_save_paths(settings):
+    if not isinstance(settings, dict):
+        return False
+    meta = settings.get("fileSavePathsMeta")
+    if not isinstance(meta, dict):
+        return False
+    return str(meta.get("source") or "").strip().lower() == "user"
+
+
 def _read_system_file_save_paths():
     if not SYSTEM_FILE_SAVE_PATHS_ENABLED:
         return None
@@ -487,7 +496,10 @@ def _persist_local_file_save_paths_if_needed(local_settings, paths):
         return
     try:
         next_settings = dict(local_settings) if isinstance(local_settings, dict) else {}
-        next_settings["fileSavePaths"] = _normalize_file_save_paths_for_policy(paths)
+        next_settings["fileSavePaths"] = _normalize_file_save_paths_for_policy(
+            paths,
+            migrate_legacy_defaults=not _is_user_managed_file_save_paths(local_settings),
+        )
         _write_json_file(SETTINGS_FILE, next_settings)
     except Exception:
         pass
@@ -503,11 +515,12 @@ def _infer_data_dir_from_temp_dir(temp_dir):
     return normalized
 
 
-def _file_save_paths_from_settings(settings):
+def _file_save_paths_from_settings(settings, migrate_legacy_defaults=True):
     src = settings.get("fileSavePaths") if isinstance(settings, dict) else {}
     if not isinstance(src, dict):
         src = {}
-    src = _migrate_legacy_default_file_save_paths(src)
+    if migrate_legacy_defaults:
+        src = _migrate_legacy_default_file_save_paths(src)
     raw_data_dir = src.get("dataDir")
     raw_temp_dir = src.get("tempDir")
     has_data_dir = bool(str(raw_data_dir or "").strip())
@@ -529,8 +542,11 @@ def _file_save_paths_from_settings(settings):
     }
 
 
-def _normalize_file_save_paths_for_policy(paths):
-    normalized = _file_save_paths_from_settings({"fileSavePaths": paths})
+def _normalize_file_save_paths_for_policy(paths, migrate_legacy_defaults=True):
+    normalized = _file_save_paths_from_settings(
+        {"fileSavePaths": paths},
+        migrate_legacy_defaults=migrate_legacy_defaults,
+    )
     normalized["userDir"] = os.path.abspath(USER_DIR)
     return normalized
 
@@ -560,8 +576,11 @@ def _is_same_or_nested_path(a, b):
     return aa == bb or _is_path_inside(aa, bb) or _is_path_inside(bb, aa)
 
 
-def _validate_file_save_paths(paths):
-    normalized = _normalize_file_save_paths_for_policy(paths)
+def _validate_file_save_paths(paths, migrate_legacy_defaults=True):
+    normalized = _normalize_file_save_paths_for_policy(
+        paths,
+        migrate_legacy_defaults=migrate_legacy_defaults,
+    )
     for label, p in (
         ("用户设置保存路径", normalized["userDir"]),
         ("画布项目保存路径", normalized["canvasDir"]),
@@ -925,7 +944,7 @@ def _start_file_save_migration(data):
     if not isinstance(path_payload, dict):
         raise ValueError("Missing fileSavePaths")
 
-    normalized = _validate_file_save_paths(path_payload)
+    normalized = _validate_file_save_paths(path_payload, migrate_legacy_defaults=False)
     previous = _current_file_save_paths()
 
     job_id = _new_file_save_migration_job_id()
@@ -1020,8 +1039,11 @@ def _ensure_storage_dirs():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
-def _apply_file_save_paths(paths, migrate=False):
-    normalized = _validate_file_save_paths(paths)
+def _apply_file_save_paths(paths, migrate=False, migrate_legacy_defaults=True):
+    normalized = _validate_file_save_paths(
+        paths,
+        migrate_legacy_defaults=migrate_legacy_defaults,
+    )
     previous = _current_file_save_paths()
     for p in normalized.values():
         os.makedirs(p, exist_ok=True)
@@ -1086,8 +1108,12 @@ if not _has_file_save_paths(_startup_settings) and _startup_system_file_save_pat
     _startup_settings["fileSavePaths"] = _startup_system_file_save_paths
 try:
     _startup_applied_file_save_paths = _apply_file_save_paths(
-        _normalize_file_save_paths_for_policy(_startup_settings.get("fileSavePaths")),
+        _normalize_file_save_paths_for_policy(
+            _startup_settings.get("fileSavePaths"),
+            migrate_legacy_defaults=not _is_user_managed_file_save_paths(_startup_settings),
+        ),
         migrate=False,
+        migrate_legacy_defaults=False,
     )
     _migrate_legacy_default_files_to_current(_startup_applied_file_save_paths)
     _persist_local_file_save_paths_if_needed(
@@ -1154,7 +1180,10 @@ def _read_user_settings():
     if system_install_id:
         merged["installId"] = system_install_id
     if local_file_save_paths:
-        merged["fileSavePaths"] = _normalize_file_save_paths_for_policy(local_file_save_paths)
+        merged["fileSavePaths"] = _normalize_file_save_paths_for_policy(
+            local_file_save_paths,
+            migrate_legacy_defaults=not _is_user_managed_file_save_paths(local_settings),
+        )
     elif system_file_save_paths:
         normalized_paths = _normalize_file_save_paths_for_policy(system_file_save_paths)
         merged["fileSavePaths"] = normalized_paths
@@ -1167,8 +1196,18 @@ def _read_user_settings():
 def _write_user_settings(data, migrate=True):
     payload = dict(data) if isinstance(data, dict) else {}
     if isinstance(payload.get("fileSavePaths"), dict):
-        applied_paths = _apply_file_save_paths(payload["fileSavePaths"], migrate=bool(migrate))
+        applied_paths = _apply_file_save_paths(
+            payload["fileSavePaths"],
+            migrate=bool(migrate),
+            migrate_legacy_defaults=False,
+        )
         payload["fileSavePaths"] = applied_paths
+        meta = payload.get("fileSavePathsMeta") if isinstance(payload.get("fileSavePathsMeta"), dict) else {}
+        payload["fileSavePathsMeta"] = {
+            **meta,
+            "source": "user",
+            "updatedAt": meta.get("updatedAt") or time.time(),
+        }
     elif "fileSavePaths" not in payload:
         payload["fileSavePaths"] = _current_file_save_paths()
     _write_json_file(SETTINGS_FILE, payload)
@@ -1567,6 +1606,111 @@ def _read_body(handler, max_bytes=None):
     if max_bytes is not None and length > max_bytes:
         raise ValueError("REQUEST_BODY_TOO_LARGE")
     return handler.rfile.read(length) if length > 0 else b""
+
+
+def _iter_sse_data_lines(response):
+    try:
+        iterator = response.iter_lines(decode_unicode=True)
+    except TypeError:
+        iterator = response.iter_lines()
+    except Exception:
+        iterator = []
+
+    for raw_line in iterator:
+        if isinstance(raw_line, bytes):
+            line = raw_line.decode("utf-8", errors="replace")
+        else:
+            line = str(raw_line or "")
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        yield line[5:].strip()
+
+
+def _extract_chat_completion_text_parts(payload):
+    if not isinstance(payload, dict):
+        return []
+    parts = []
+    choices = payload.get("choices")
+    if not isinstance(choices, list):
+        data = payload.get("data")
+        choices = data.get("choices") if isinstance(data, dict) else []
+    for choice in choices or []:
+        if not isinstance(choice, dict):
+            continue
+        delta = choice.get("delta")
+        if isinstance(delta, dict) and isinstance(delta.get("content"), str):
+            parts.append(delta.get("content") or "")
+        message = choice.get("message")
+        if isinstance(message, dict) and isinstance(message.get("content"), str):
+            parts.append(message.get("content") or "")
+        if isinstance(choice.get("text"), str):
+            parts.append(choice.get("text") or "")
+    for key in ("text", "output", "content"):
+        if isinstance(payload.get(key), str):
+            parts.append(payload.get(key) or "")
+    data = payload.get("data")
+    if isinstance(data, dict):
+        for key in ("text", "output", "content"):
+            if isinstance(data.get(key), str):
+                parts.append(data.get(key) or "")
+    return parts
+
+
+def _normalize_chat_completion_sse_response(response):
+    text_parts = []
+    last_payload = None
+    finish_reason = None
+    role = "assistant"
+
+    for data_line in _iter_sse_data_lines(response):
+        if not data_line:
+            continue
+        if data_line == "[DONE]":
+            break
+        try:
+            payload = json.loads(data_line)
+        except Exception:
+            continue
+        if isinstance(payload, dict):
+            last_payload = payload
+            choices = payload.get("choices")
+            if not isinstance(choices, list):
+                data = payload.get("data")
+                choices = data.get("choices") if isinstance(data, dict) else []
+            if choices and isinstance(choices[0], dict):
+                finish_reason = choices[0].get("finish_reason") or finish_reason
+                delta = choices[0].get("delta")
+                message = choices[0].get("message")
+                if isinstance(delta, dict) and isinstance(delta.get("role"), str):
+                    role = delta.get("role") or role
+                if isinstance(message, dict) and isinstance(message.get("role"), str):
+                    role = message.get("role") or role
+            text_parts.extend(_extract_chat_completion_text_parts(payload))
+
+    content = "".join(text_parts)
+    if content:
+        normalized = {
+            "id": last_payload.get("id", "") if isinstance(last_payload, dict) else "",
+            "object": "chat.completion",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": role,
+                        "content": content,
+                    },
+                    "finish_reason": finish_reason or "stop",
+                }
+            ],
+        }
+        if isinstance(last_payload, dict) and isinstance(last_payload.get("usage"), dict):
+            normalized["usage"] = last_payload.get("usage")
+        return json.dumps(normalized, ensure_ascii=False)
+
+    if isinstance(last_payload, dict):
+        return json.dumps(last_payload, ensure_ascii=False)
+    return ""
 
 
 MEDIA_FILE_ROUTE_SERVICE = MediaFileRouteService(
@@ -2769,6 +2913,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 _json_err(self, 400, "Invalid JSON"); return
             if not api_url or not api_key:
                 _json_err(self, 400, "Missing apiUrl or apiKey"); return
+            local_authorization_payload = dict(data) if isinstance(data, dict) else {}
+            for key in SUBSCRIPTION_AUTHORIZATION_ID_KEYS:
+                data.pop(key, None)
             def _extract_task_id_from_text(raw_text):
                 text = str(raw_text or "")
                 if not text:
@@ -2817,7 +2964,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if workflow_id in VIDEO_VIP_WORKFLOW_IDS:
                 if not _enforce_vip_subscription_gate(
                     self,
-                    data,
+                    local_authorization_payload,
                     required_model_id=f"runninghub/{workflow_id}",
                 ):
                     return
@@ -3006,8 +3153,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 import requests
                 req_body = json.dumps(data)
                 try:
+                    resp = requests.post(endpoint, data=req_body, headers=headers, timeout=300, stream=True)
                     # 生成请求允许最长 300 秒，与 aiTextApi.js 保持一致
-                    resp = requests.post(endpoint, data=req_body, headers=headers, timeout=300)
                 except requests.exceptions.ConnectionError as ce:
                     _json_err(self, 502, f"连接 AI 服务失败: {str(ce)}")
                     return
@@ -3019,11 +3166,22 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     return
                 
                 # 兼容返回 SSE 的服务，转换为普通 JSON
-                resp_text = resp.text
                 resp_content_type = resp.headers.get('Content-Type', '')
+                try:
+                    if 'text/event-stream' in resp_content_type.lower():
+                        resp_text = _normalize_chat_completion_sse_response(resp)
+                    else:
+                        resp_text = resp.text
+                finally:
+                    try:
+                        resp.close()
+                    except Exception:
+                        pass
+                if not resp_text:
+                    resp_text = "{}"
                 
                 # 处理 text/event-stream 或以 data: 开头的响应
-                is_sse = 'text/event-stream' in resp_content_type or resp_text.strip().startswith('data:')
+                is_sse = resp_text.strip().startswith('data:')
                 if is_sse:
                     try:
                         # 取 SSE 最后一条有效 JSON

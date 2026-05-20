@@ -1,8 +1,5 @@
 {
   "schemaVersion": "1.0",
-  "canonicalExcludes": [
-    "runninghub/1994711386552999938"
-  ],
   "gates": [
     {
       "key": "runninghubVideoV54",
@@ -38,6 +35,17 @@
       ]
     },
     {
+      "key": "runninghubCommercialDigitalHuman",
+      "modelId": "runninghub/2055639633148563458",
+      "workflowId": "2055639633148563458",
+      "displayName": "\u5546\u4e1a\u7ea7\u6570\u5b57\u4eba",
+      "aliases": [
+        "commercial_digital_human",
+        "commercial_digital_human.pro",
+        "ai-app/2055639633148563458"
+      ]
+    },
+    {
       "key": "runninghubAdvancedVoiceClone",
       "modelId": "runninghub/2050165249344585729",
       "workflowId": "2050165249344585729",
@@ -50,23 +58,6 @@
       "legacyAliases": [
         {
           "value": "2050165249344585729",
-          "deleteWhen": "Remove after subscriptionAccess tests, backend subscription gate tests, entitlement payloads, and saved projects all stop accepting bare RunningHub workflow IDs for this gate."
-        }
-      ]
-    },
-    {
-      "key": "runninghubAnimeReal",
-      "modelId": "runninghub/1994718111704158209",
-      "workflowId": "1994718111704158209",
-      "displayName": "\u6f2b\u753b\u8f6c\u771f\u4eba",
-      "aliases": [
-        "anime_real_vip",
-        "anime_real.pro",
-        "ai-app/1994718111704158209"
-      ],
-      "legacyAliases": [
-        {
-          "value": "1994718111704158209",
           "deleteWhen": "Remove after subscriptionAccess tests, backend subscription gate tests, entitlement payloads, and saved projects all stop accepting bare RunningHub workflow IDs for this gate."
         }
       ]

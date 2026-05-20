@@ -1,3 +1,28 @@
+🎉 V0.4.3 版本更新啦！
+
+0.3.2之前的版本请执行以下操作再安装 
+删除掉以下目录的关于AI-CanvasPro的所有内容 
+“你的安装目录“
+%AppData% 和 %LOCALAPPDATA%
+操作方式：我的电脑地址栏输入：%AppData% 会跳转到对应目录 删掉AI-CanvasPro字样的所有文件夹即可 
+%LOCALAPPDATA% 也是一样操作
+
+[previewVideoUrl]: https://www.bilibili.com/video/BV1RX5z6gEXq/
+
+✨ 新增功能：
+- 新增 “商业级数字人对口型” vip授权 
+- 视频节点 新增“apimart” ：HappyHorse 1.0， Wan2.7 ，VEO3 ，Hailuo-02 ， Wan2.6 ，Kling v3 ，Kling v3 Omni，Kling Video O1 ，Vidu Q3
+- 图像生成节点 新增 "runninghub模型" “Midjourney V6 v7 v8.1”
+
+🐛 修复与优化：
+- 画布速度优化
+- 修复声音节点“下载”无效的问题
+
+AI-CanvasPro！ windows 应用版本已发布 欢迎体验！ mac版本后续再上 （主要是没得测试）
+BUG问题或要新增功能反馈文档：https://i1etb6xynr.feishu.cn/wiki/N2C3wD6SgisOpek11mfcfJCinkr?from=from_copylink
+
+---
+
 🎉 V0.4.2 版本更新啦！
 
 0.3.2之前的版本请执行以下操作再安装 
