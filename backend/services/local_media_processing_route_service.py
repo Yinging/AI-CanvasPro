@@ -387,6 +387,220 @@ class LocalMediaProcessingRouteService:
         except Exception as exc:
             return self._json_err(500, f"Error processing audio: {str(exc)}")
 
+    def _handle_video_clip_export(self, handler):
+        data, error = self._read_json_request(handler)
+        if error is not None:
+            return error
+
+        src_path = (data.get("src") or data.get("videoSrc") or "").strip()
+        audio_src_path = (data.get("audioSrc") or "").strip()
+        try:
+            start_sec = float(data.get("start", data.get("videoStart", 0)))
+            end_sec = float(data.get("end", data.get("videoEnd", 0)))
+            audio_start_sec = float(data.get("audioStart", 0))
+            audio_end_sec = float(data.get("audioEnd", 0))
+        except Exception:
+            return self._json_err(400, "Invalid parameters")
+        if not src_path or end_sec <= start_sec:
+            return self._json_err(400, "Invalid parameters")
+        if audio_src_path and audio_end_sec <= audio_start_sec:
+            return self._json_err(400, "Invalid audio parameters")
+
+        local_src, error = self._validate_src_path(
+            src_path,
+            missing_message="Source video not found",
+        )
+        if error is not None:
+            return error
+
+        local_audio_src = ""
+        if audio_src_path:
+            local_audio_src, error = self._validate_src_path(
+                audio_src_path,
+                missing_message="Source audio not found",
+            )
+            if error is not None:
+                return error
+
+        out_dir = os.path.join(self._output_dir(), "ClipVideo")
+        os.makedirs(out_dir, exist_ok=True)
+        filename = self._new_filename("clip", "mp4")
+        out_path = os.path.join(out_dir, filename)
+
+        try:
+            startupinfo = self._startupinfo()
+            wh = self._ffprobe_video_wh(local_src, startupinfo)
+            if not wh:
+                return self._json_err(500, "FFprobe failed: missing width/height")
+            video_duration = end_sec - start_sec
+            cmd = [
+                self._ffmpeg(),
+                "-y",
+                "-ss",
+                str(start_sec),
+                "-t",
+                str(video_duration),
+                "-i",
+                local_src,
+            ]
+            if local_audio_src:
+                audio_duration = audio_end_sec - audio_start_sec
+                cmd.extend(
+                    [
+                        "-ss",
+                        str(audio_start_sec),
+                        "-t",
+                        str(audio_duration),
+                        "-i",
+                        local_audio_src,
+                        "-filter_complex",
+                        "[1:a]aformat=sample_rates=44100:channel_layouts=stereo,asetpts=PTS-STARTPTS,apad[a]",
+                        "-map",
+                        "0:v:0",
+                        "-map",
+                        "[a]",
+                        "-t",
+                        str(video_duration),
+                    ]
+                )
+            else:
+                cmd.extend(["-map", "0:v:0", "-map", "0:a?"])
+            cmd.extend(
+                [
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-profile:v",
+                    "high",
+                    "-preset",
+                    "fast",
+                    "-c:a",
+                    "aac",
+                ]
+            )
+            fps_int = self._normalize_requested_clip_fps(
+                data.get("fps", data.get("frameRate"))
+            ) or self._ffprobe_video_fps_int(local_src, startupinfo)
+            if fps_int:
+                cmd.extend(["-r", str(fps_int)])
+            cmd.extend(["-movflags", "+faststart", out_path])
+
+            returncode, _, stderr = self._run_process(
+                cmd,
+                timeout=300,
+                startupinfo=startupinfo,
+            )
+            if returncode != 0:
+                err_text = (stderr or b"").decode("utf-8", errors="ignore").strip()
+                return self._json_err(500, f"FFmpeg clip export failed: {err_text or 'unknown error'}")
+            rel_path = f"output/ClipVideo/{filename}"
+            return self._json_ok(
+                {
+                    "success": True,
+                    "filename": filename,
+                    "path": rel_path,
+                    "localPath": rel_path,
+                    "url": f"/{rel_path}",
+                    "videoDuration": video_duration,
+                    "fps": fps_int,
+                    "videoWidth": wh[0],
+                    "videoHeight": wh[1],
+                }
+            )
+        except subprocess.TimeoutExpired:
+            return self._json_err(504, "FFmpeg process timeout")
+        except Exception as exc:
+            return self._json_err(500, f"Error exporting clip: {str(exc)}")
+
+    def _handle_audio_compose(self, handler):
+        data, error = self._read_json_request(handler)
+        if error is not None:
+            return error
+
+        sources = data.get("srcs") or data.get("sources") or []
+        if not isinstance(sources, list) or len(sources) < 2:
+            return self._json_err(400, "Invalid srcs")
+        if len(sources) > 80:
+            return self._json_err(400, "Too many clips")
+
+        abs_sources = []
+        for source in sources:
+            try:
+                source_path = (source or "").strip()
+            except Exception:
+                source_path = ""
+            if not source_path:
+                return self._json_err(400, "Invalid srcs")
+            local_src, error = self._validate_src_path(
+                source_path,
+                missing_message="Source audio not found",
+            )
+            if error is not None:
+                return error
+            abs_sources.append(local_src)
+
+        out_dir = os.path.join(self._output_dir(), "ComposeAudio")
+        os.makedirs(out_dir, exist_ok=True)
+        filename = self._new_filename("compose", "mp3")
+        out_path = os.path.join(out_dir, filename)
+
+        try:
+            startupinfo = self._startupinfo()
+            for path in abs_sources:
+                if not self._ffprobe_has_audio(path, startupinfo):
+                    return self._json_err(400, "Source audio has no audio stream")
+
+            cmd = [self._ffmpeg(), "-y"]
+            for path in abs_sources:
+                cmd.extend(["-i", path])
+
+            parts = []
+            for index in range(len(abs_sources)):
+                parts.append(
+                    f"[{index}:a]aformat=sample_rates=44100:channel_layouts=stereo,asetpts=PTS-STARTPTS[a{index}]"
+                )
+            join = "".join([f"[a{index}]" for index in range(len(abs_sources))])
+            parts.append(f"{join}concat=n={len(abs_sources)}:v=0:a=1[a]")
+
+            cmd.extend(
+                [
+                    "-filter_complex",
+                    ";".join(parts),
+                    "-map",
+                    "[a]",
+                    "-vn",
+                    "-c:a",
+                    "libmp3lame",
+                    "-b:a",
+                    "192k",
+                    out_path,
+                ]
+            )
+
+            returncode, _, stderr = self._run_process(
+                cmd,
+                timeout=900,
+                startupinfo=startupinfo,
+            )
+            if returncode != 0:
+                err_text = (stderr or b"").decode("utf-8", errors="ignore").strip()
+                return self._json_err(500, f"FFmpeg audio compose failed: {err_text or 'unknown error'}")
+            rel_path = f"output/ComposeAudio/{filename}"
+            return self._json_ok(
+                {
+                    "success": True,
+                    "filename": filename,
+                    "path": rel_path,
+                    "localPath": rel_path,
+                    "url": f"/{rel_path}",
+                }
+            )
+        except subprocess.TimeoutExpired:
+            return self._json_err(504, "FFmpeg process timeout")
+        except Exception as exc:
+            return self._json_err(500, f"Error composing audio: {str(exc)}")
+
     def _handle_video_separate_audio_video(self, handler):
         data, error = self._read_json_request(handler)
         if error is not None:
@@ -767,6 +981,10 @@ class LocalMediaProcessingRouteService:
             return self._handle_video_cut(handler)
         if normalized == "/api/v2/audio/cut":
             return self._handle_audio_cut(handler)
+        if normalized == "/api/v2/video/clip_export":
+            return self._handle_video_clip_export(handler)
+        if normalized == "/api/v2/audio/compose":
+            return self._handle_audio_compose(handler)
         if normalized == "/api/v2/video/separate_audio_video":
             return self._handle_video_separate_audio_video(handler)
         if normalized == "/api/v2/video/compose":

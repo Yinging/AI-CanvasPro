@@ -2923,10 +2923,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 patterns = [
                     r'"task_id"\s*:\s*"([^"]+)"',
                     r'"taskId"\s*:\s*"([^"]+)"',
-                    r'"id"\s*:\s*"([^"]+)"',
                     r'"data"\s*:\s*"([^"]{8,})"',
                     r'\btask[_-]?id\b\s*[:=]\s*["\']?([a-zA-Z0-9._:-]+)["\']?',
-                    r'\bid\b\s*[:=]\s*["\']?([a-zA-Z0-9._:-]{8,})["\']?',
                 ]
                 for pattern in patterns:
                     match = re.search(pattern, text, flags=re.IGNORECASE)
@@ -3001,8 +2999,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                             "x-taskid",
                             "task-id",
                             "taskid",
-                            "x-request-id",
-                            "request-id",
                             "x-job-id",
                             "job-id",
                         ):
@@ -3137,7 +3133,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 _json_err(self, 400, "Missing apiUrl or apiKey"); return
             
             # 兼容 Gemini 和 OpenAI 风格接口
-            if ":generateContent" in api_url or "/v1beta/models" in api_url or api_url.endswith("/chat/completions"):
+            if (
+                ":generateContent" in api_url
+                or "/v1beta/models" in api_url
+                or api_url.endswith("/chat/completions")
+                or api_url.endswith("/responses")
+            ):
                 endpoint = api_url
             else:
                 endpoint = f"{api_url}/chat/completions"
