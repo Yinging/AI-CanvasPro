@@ -1,9 +1,11 @@
 import json
 import mimetypes
 import os
+import platform
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -17,6 +19,8 @@ class DreaminaCliService:
         "ljhwZthlaukjlkulzlp/dreamina_cli_beta"
     )
     _WINDOWS_BINARY_URL = f"{_DOWNLOAD_BASE}/dreamina_cli_windows_amd64.exe"
+    _DARWIN_AMD64_BINARY_URL = f"{_DOWNLOAD_BASE}/dreamina_cli_darwin_amd64"
+    _DARWIN_ARM64_BINARY_URL = f"{_DOWNLOAD_BASE}/dreamina_cli_darwin_arm64"
     _LOGIN_SUCCESS_MARKER = "[DREAMINA:LOGIN_SUCCESS]"
     _LOGIN_REUSED_MARKER = "[DREAMINA:LOGIN_REUSED]"
     _QR_READY_MARKER = "[DREAMINA:QR_READY]"
@@ -618,9 +622,42 @@ class DreaminaCliService:
             time.sleep(0.4)
         return cleaned
 
+    def _resolve_managed_cli_binary(self, os_name=None, sys_platform=None, machine=None):
+        runtime_os = os.name if os_name is None else str(os_name or "")
+        runtime_platform = sys.platform if sys_platform is None else str(sys_platform or "")
+        runtime_machine = platform.machine() if machine is None else str(machine or "")
+        arch = runtime_machine.strip().lower()
+
+        if runtime_os == "nt":
+            return {
+                "url": self._WINDOWS_BINARY_URL,
+                "suffix": ".exe",
+                "label": "Windows",
+            }
+
+        if runtime_platform == "darwin":
+            if arch in ("arm64", "aarch64"):
+                return {
+                    "url": self._DARWIN_ARM64_BINARY_URL,
+                    "suffix": "",
+                    "label": "macOS arm64",
+                }
+            if arch in ("amd64", "x86_64", "x64", "i386", "i686"):
+                return {
+                    "url": self._DARWIN_AMD64_BINARY_URL,
+                    "suffix": "",
+                    "label": "macOS amd64",
+                }
+            raise RuntimeError(
+                f"当前 macOS 架构暂不支持自动准备即梦组件：{runtime_machine or 'unknown'}"
+            )
+
+        raise RuntimeError(
+            "当前平台暂不支持自动准备即梦组件，请在设置中配置 dreaminaCli.commandPath"
+        )
+
     def _ensure_managed_cli(self):
-        if os.name != "nt":
-            raise RuntimeError("当前版本仅支持在 Windows 自动准备即梦组件")
+        binary = self._resolve_managed_cli_binary()
 
         target_path = self._managed_command_path
         os.makedirs(os.path.dirname(target_path), exist_ok=True)
@@ -632,12 +669,12 @@ class DreaminaCliService:
 
         fd, temp_path = tempfile.mkstemp(
             prefix="dreamina-",
-            suffix=".exe",
+            suffix=binary["suffix"],
             dir=os.path.dirname(target_path),
         )
         os.close(fd)
         try:
-            self._download_file(self._WINDOWS_BINARY_URL, temp_path)
+            self._download_file(binary["url"], temp_path)
             os.replace(temp_path, target_path)
             try:
                 os.chmod(target_path, 0o755)
@@ -654,7 +691,9 @@ class DreaminaCliService:
                     os.remove(temp_path)
             except Exception:
                 pass
-            raise RuntimeError("即梦组件准备失败，请检查网络后重试") from exc
+            raise RuntimeError(
+                f"{binary['label']} 即梦组件准备失败，请检查网络后重试"
+            ) from exc
 
     def _ensure_command_path(self):
         command_path = self._resolve_command_path()
